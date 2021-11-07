@@ -34,9 +34,8 @@ dma_channel_config sw_tx_c;
 int sw_sm;
 int sw_dma_chan;
 uint32_t sw_bitmask;
-// Must make local copy of sw_data. DMA will change value faster than CPU can
-// process
 volatile uint32_t sw_data;
+uint32_t sw_data_cache;
 
 uint64_t time_now;
 uint64_t sw_debounce_timestamp[SW_GPIO_SIZE];
@@ -148,32 +147,17 @@ struct report {
  **/
 void joy_mode() {
   if (tud_hid_ready()) {
-    // Update time
-    time_now = time_us_64();
-
-    // Cache sw_data
-    int temp_data = sw_data;
     // Zero out buttons
     report.buttons = 0;
 
     for (int i = 0; i < SW_GPIO_SIZE; i++) {
-      int bt_val = (temp_data >> i) & 0x1;
-      int prev_bt_val = (prev_sw_data >> i) & 0x1;
-      // If debounce and under time, use old value
-      if (SW_DEBOUNCE &&
-          (time_now - sw_debounce_timestamp[i] < SW_DEBOUNCE_TIME_US)) {
-        report.buttons |= prev_bt_val << (BT_MAP[i] - 1);
-      } else {
-        // Use new value
-        report.buttons |= bt_val << (BT_MAP[i] - 1);
-        // Update prev_sw_data
-        prev_sw_data |= bt_val << (BT_MAP[i] - 1);
+      // If button is pressed and has passed debounce hold time
+      if ((sw_data_cache >> i) & 0x1 == 0x1 &&
+          (time_us_64() - sw_debounce_timestamp[i] >= SW_DEBOUNCE_TIME_US)) {
+        report.buttons |= 1 << (BT_MAP[i] - 1);
       }
+      // Rest of the buttons are already set to 0
     }
-
-    // Cache enc_val
-    uint32_t temp_val[ENC_GPIO_SIZE];
-    for (int i = 0; i < ENC_GPIO_SIZE; i++) temp_val[i] = enc_val[i];
 
     // find the delta between previous and current enc_val
     for (int i = 0; i < ENC_GPIO_SIZE; i++) {
@@ -200,20 +184,16 @@ void key_mode(uint64_t time_now) {
 
     /*------------- Keyboard -------------*/
     uint8_t nkro_report[32] = {0};
-    // Cache a local copy of sw_data, dma can change it in middle of processing
-    uint16_t temp_data = sw_data;
 
     for (int i = 0; i < SW_GPIO_SIZE; i++) {
-      int temp_key = temp_data >> i & 0x1;
-      // If debounce
-      if (SW_DEBOUNCE) {
-        // Under debounce time, use old key
-        if ((time_now - sw_debounce_timestamp[i]) < SW_DEBOUNCE_TIME_US) {
-          temp_key = prev_sw_data >> i & 0x1;
-        } else {
-          // Over debounce time, update prev key
-          prev_sw_data |= temp_key << i;
-        }
+      int temp_key = sw_data_cache >> i & 0x1;
+      // If button is pressed and has passed debounce hold time
+      if (((sw_data >> i) & 0x1) == 0x1 &&
+          (time_us_64() - sw_debounce_timestamp[i] >= SW_DEBOUNCE_TIME_US)) {
+        temp_key = prev_sw_data >> i & 0x1;
+      } else {
+        // Over debounce time, update prev key
+        prev_sw_data |= temp_key << i;
       }
 
       if (temp_key) {
@@ -245,6 +225,24 @@ void key_mode(uint64_t time_now) {
     }
     // Alternate reports
     kbm_report = !kbm_report;
+  }
+}
+
+/**
+ * Updates timestamps for debouncing
+ **/
+void update_timestamps() {
+  // Save a copy for input modes to work with
+  sw_data_cache = sw_data;
+
+  for (int i = 0; i < SW_GPIO_SIZE; i++) {
+    if (((prev_sw_data >> i) & 0x1) == 0x0 &&
+        ((sw_data_cache >> i) & 0x1) == 0x1) {
+      sw_debounce_timestamp[i] = time_us_64();
+    }
+    // Update prev_sw_data
+    prev_sw_data &= 0x0 << i;
+    prev_sw_data |= (sw_data_cache >> i) & 0x1 << i;
   }
 }
 
@@ -339,12 +337,10 @@ void init() {
     gpio_init(SW_GPIO[i]);
     sw_debounce_timestamp[i] = 0;
   }
-  prev_sw_data = 0;
-
   // State Machine
   sw_sm = 1;
   uint sw_offset = pio_add_program(pio_1, &switches_program);
-  switches_program_init(pio_1, sw_sm, sw_offset, SW_DEBOUNCE);
+  switches_program_init(pio_1, sw_sm, sw_offset);
   // Get dma channel
   sw_dma_chan = dma_claim_unused_channel(true);
   // Configure
@@ -361,6 +357,8 @@ void init() {
   // Trigger first transfer
   dma_channel_configure(sw_dma_chan, &sw_tx_c, &pio_1->txf[sw_sm], &sw_bitmask,
                         1, true);
+  sw_data_cache = 0;
+  prev_sw_data = 0;
 
   // Setup LED GPIO
   for (int i = 0; i < LED_GPIO_SIZE; i++) {
@@ -404,6 +402,7 @@ int main(void) {
 
   while (1) {
     tud_task();  // tinyusb device task
+    update_timestamps();
     loop_mode();
     update_lights();
   }
