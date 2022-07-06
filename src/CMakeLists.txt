@@ -13,8 +13,9 @@ target_link_libraries(Pico_Game_Controller PRIVATE
         pico_stdlib
         tinyusb_device
         tinyusb_board
-        hardware_pio
         hardware_dma
-        hardware_irq)
+        hardware_flash
+        hardware_irq
+        hardware_pio)
 
 pico_add_extra_outputs(Pico_Game_Controller)

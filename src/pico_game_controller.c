@@ -20,8 +20,9 @@
 #include "tusb.h"
 #include "usb_descriptors.h"
 
-#include "rgb/rgb_include.h"
 #include "debounce/debounce_include.h"
+#include "flash/flash_util.c"
+#include "rgb/rgb_include.h"
 
 PIO pio, pio_1;
 uint32_t enc_val[ENC_GPIO_SIZE];
