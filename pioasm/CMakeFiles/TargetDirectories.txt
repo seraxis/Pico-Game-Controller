@@ -1,0 +1,3 @@
+/home/aya/src/Pico-Game-Controller-main/pioasm/CMakeFiles/pioasm.dir
+/home/aya/src/Pico-Game-Controller-main/pioasm/CMakeFiles/edit_cache.dir
+/home/aya/src/Pico-Game-Controller-main/pioasm/CMakeFiles/rebuild_cache.dir
